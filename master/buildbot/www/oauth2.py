@@ -73,7 +73,7 @@ class OAuth2LoginResource(auth.LoginResource):
         session = request.getSession()
         session.user_info = details
         session.updateSession(request)
-        state = request.args.get(b"state", [b""])[0]
+        state = bytes2unicode(request.args.get(b"state", [b""])[0])
 
         assert self.auth.homeUri is not None
 
@@ -140,7 +140,7 @@ class OAuth2Auth(auth.AuthBase):
             'response_type': 'code',
         }
         if redirect_url is not None:
-            oauth_params['state'] = urlencode({"redirect": redirect_url})
+            oauth_params['state'] = urlencode({"redirect": bytes2unicode(redirect_url)})
         oauth_params.update(self.authUriAdditionalParams)
         sorted_oauth_params = sorted(oauth_params.items(), key=lambda val: val[0])
         return f"{self.authUri}?{urlencode(sorted_oauth_params)}"
