@@ -192,6 +192,19 @@ class OAuth2Auth(TestReactorMixin, www.WwwTestMixin, ConfigErrorsMixin, unittest
         self.assertEqual(res, exp)
 
     @defer.inlineCallbacks
+    def test_getGithubLoginURL_with_bytes_redirect(self):
+        # Regression test: redirect URL from request.args is bytes, not string
+        auth = yield self.setup_github_auth()
+        res = yield auth.getLoginURL(b'/builders/154/builds/331')
+        exp = (
+            "https://github.com/login/oauth/authorize?client_id=ghclientID&"
+            "redirect_uri=h%3A%2Fa%2Fb%2Fauth%2Flogin&response_type=code&"
+            "scope=user%3Aemail+read%3Aorg&"
+            "state=redirect%3D%252Fbuilders%252F154%252Fbuilds%252F331"
+        )
+        self.assertEqual(res, exp)
+
+    @defer.inlineCallbacks
     def test_getGithubLoginURL_with_secret(self):
         auth = yield self.setup_github_auth_v4_secret()
         res = yield auth.getLoginURL('http://redir')
@@ -564,6 +577,35 @@ class OAuth2Auth(TestReactorMixin, www.WwwTestMixin, ConfigErrorsMixin, unittest
         # token not supported anymore
         res = yield self.render_resource(rsrc, b'/?token=token!')
         rsrc.auth.getLoginURL.assert_called_once()
+
+    @defer.inlineCallbacks
+    def test_loginResource_with_redirect(self):
+        # Regression test: redirect parameter should work through full OAuth flow
+        auth = yield self.setup_github_auth()
+
+        class fakeAuth:
+            homeUri = "http://buildbot/"
+            getLoginURL = mock.Mock(side_effect=lambda x: defer.succeed("://oauth"))
+            verifyCode = mock.Mock(side_effect=lambda code: defer.succeed({"username": "bar"}))
+            userInfoProvider = None
+
+        rsrc = auth.getLoginResource()
+        rsrc.auth = fakeAuth()
+
+        # Test initial login request with redirect parameter passes bytes to getLoginURL
+        res = yield self.render_resource(rsrc, b'/?redirect=/builders/154/builds/331')
+        rsrc.auth.getLoginURL.assert_called_once_with(b'/builders/154/builds/331')
+        self.assertEqual(res, {'redirected': b'://oauth'})
+
+        # Test OAuth callback with state parameter redirects to original location
+        rsrc.auth.getLoginURL.reset_mock()
+        rsrc.auth.verifyCode.reset_mock()
+        # state=redirect%3D%2Fbuilders%2F154%2Fbuilds%2F331 is urlencode({"redirect": "/builders/..."})
+        res = yield self.render_resource(
+            rsrc, b'/?code=code!&state=redirect%3D%2Fbuilders%2F154%2Fbuilds%2F331'
+        )
+        rsrc.auth.verifyCode.assert_called_once_with(b"code!")
+        self.assertEqual(res, {'redirected': b'http://buildbot/#/builders/154/builds/331'})
 
     @defer.inlineCallbacks
     def test_getConfig_github(self):
